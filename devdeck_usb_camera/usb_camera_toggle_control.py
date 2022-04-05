@@ -3,6 +3,8 @@ import os
 import requests
 import watchdog.events
 
+from typing import Callable
+
 from devdeck_core.controls.deck_control import DeckControl
 
 from watchdog.observers import Observer
@@ -10,8 +12,6 @@ from watchdog.events import PatternMatchingEventHandler
 from xdg.BaseDirectory import *
 
 defaultIconPath = os.path.join(xdg_config_dirs[0], 'devdeck/assets')
-# defaultEnabledIcon = 'cameraEnabled.png'
-# defaultDisabledIcon ='cameraDisabled.png'
 
 defaultUsbRootPath = '/sys/bus/usb'
 defaultUsbDriversFamily = 'uvcvideo'
@@ -22,52 +22,68 @@ class usbCameraToggleControl(DeckControl):
         self.__logger = logging.getLogger('devdeck')
         super().__init__(key_no, **kwargs)
 
-        self.usbRootPath = self.settings['usbRootPath'] or defaultUsbRootPath
-        self.usbDriversFamily = self.settings['usbDriversFamily'] or defaultUsbDriversFamily
-        self.cameraUsbAddress = self.settings['cameraUsbAddress']
+        print(kwargs)
+        self.usbRootPath = kwargs['usbRootPath'] or defaultUsbRootPath
+        self.usbDriversFamily = kwargs['usbDriversFamily'] or defaultUsbDriversFamily
+        self.cameraUsbAddress = kwargs['cameraUsbAddress']
+        self.iconPath = kwargs['iconPath'] or defaultIconPath
+        self.cameraEnabledIcon = kwargs['cameraEnabledIcon']
+        self.cameraDisabledIcon = kwargs['cameraDisabledIcon']
         self.observerPath = os.path.join(self.usbRootPath, 'drivers', self.usbDriversFamily)
         self.testPath = os.path.join(self.observerPath, self.cameraUsbAddress)
 
     def initialize(self):
         patterns = [self.cameraUsbAddress]
-
         if os.path.exists(self.testPath):
-            renderer(created)
+            self.render(self.cameraEnabledIcon)
         else:
-            renderer(deleted)
+            self.render(self.cameraDisabledIcon)
 
-        event_handler = MyHandler(patterns, renderer())
-        
+        event_handler = watchdog.events.PatternMatchingEventHandler(
+            patterns = [self.cameraUsbAddress],
+            ignore_patterns=[],
+            ignore_directories=True
+        )
+            
+        event_handler.on_created = self.camera_enabled
+        event_handler.on_deleted = self.camera_disabled
+            
         observer = Observer()
-        observer.schedule(event_handler, path=observerPath, recursive=False)
-
-
+        observer.schedule(event_handler, path=self.observerPath, recursive=False)
+        observer.start()
+        
     def pressed(self):
         observerPath = self.observerPath
         testPath = self.testPath
         cameraUsbAddress = self.cameraUsbAddress
         
         if os.path.exists(testPath):
-            with open(os.path.join(observerPath, 'unbind')) as unbind:
+            with open(os.path.join(observerPath, 'unbind'), "a") as unbind:
                 unbind.write(cameraUsbAddress)
         else:
-            with open(os.path.join(observerPath, 'bind')) as bind:
+            with open(os.path.join(observerPath, 'bind'), "a") as bind:
                 bind.write(cameraUsbAddress)
 
-    def renderer(state):
-        context = self.deck_context()
-        renderer = context.renderer()
+    def render(self, icon):
+        iconPath = self.iconPath
+                
+        with self.deck_context() as context:
+            with context.renderer() as r:
+                r\
+                    .image(os.path.join(iconPath, icon)) \
+                    .center_vertically() \
+                    .center_horizontally() \
+                    .height(900) \
+                    .width(900) \
+                    .end()
 
-        iconPath = self.settings['iconPath'] or defaultIconPath,
-        cameraEnabledIcon = self.settings['cameraEnabledIcon'],
-        cameraDisabledIcon = self.settings['cameraDisabledIcon']
+    def camera_enabled(self, event):
+        self.render(self.cameraEnabledIcon)        
+        self.__logger.info("camera enabled")
 
-        if state == 'created':
-            renderer.image(os.path.join(iconPath, cameraEnabledIcon))
-        elif state == 'deleted':
-            renderer.image(os.path.join(iconPath, cameraDisabledIcon))
-        else:
-            self.__logger.err("unhandled state: %s", state)
+    def camera_disabled(self, event):
+        self.render(self.cameraDisabledIcon)        
+        self.__logger.info("camera disabled")
 
     def settings_schema(self):
         return {
@@ -97,18 +113,5 @@ class usbCameraToggleControl(DeckControl):
             },
         }
 
-class MyHandler(PatternMatchingEventHandler):
-    def __init__(self, patterns, renderer: callable):
-        self.__logger = logging.getLogger('devdeck')
-        self.renderer = renderer
-        self.patterns = patterns
-
-    def on_created(self, event):
-        renderer('created')        
-        self.__logger.info("camera enabled")
-        
-    def on_deleted(self, event):
-        renderer('deleted')
-        self.__logger.info("camera disabled")
         
 
