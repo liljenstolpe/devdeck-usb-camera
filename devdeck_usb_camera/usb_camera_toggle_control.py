@@ -3,7 +3,7 @@ import os
 import requests
 import watchdog.events
 
-from typing import Callable
+from typing import Union, Callable
 
 from devdeck_core.controls.deck_control import DeckControl
 
@@ -22,7 +22,6 @@ class usbCameraToggleControl(DeckControl):
         self.__logger = logging.getLogger('devdeck')
         super().__init__(key_no, **kwargs)
 
-        print(kwargs)
         self.usbRootPath = kwargs['usbRootPath'] or defaultUsbRootPath
         self.usbDriversFamily = kwargs['usbDriversFamily'] or defaultUsbDriversFamily
         self.cameraUsbAddress = kwargs['cameraUsbAddress']
@@ -39,19 +38,28 @@ class usbCameraToggleControl(DeckControl):
         else:
             self.render(self.cameraDisabledIcon)
 
-        event_handler = watchdog.events.PatternMatchingEventHandler(
-            patterns = [self.cameraUsbAddress],
-            ignore_patterns=[],
-            ignore_directories=True
-        )
-            
-        event_handler.on_created = self.camera_enabled
-        event_handler.on_deleted = self.camera_disabled
+        event_handler = MyHandler(self.cameraEnabled, self.cameraUsbAddress)
             
         observer = Observer()
         observer.schedule(event_handler, path=self.observerPath, recursive=False)
         observer.start()
+        try:
+            while True:
+                time.sleep(1)
+        except:
+            observer.stop()
+        observer.join()                
+                
+    def cameraEnabled(self, state):
+        self.state = state
         
+        if self.state:
+            self.render(self.cameraEnabledIcon)
+            self.__logger.info("camera enabled")
+        else:
+            self.render(self.cameraDisabledIcon)
+            self.__logger.info("camera disabled")
+
     def pressed(self):
         observerPath = self.observerPath
         testPath = self.testPath
@@ -76,14 +84,6 @@ class usbCameraToggleControl(DeckControl):
                     .height(900) \
                     .width(900) \
                     .end()
-
-    def camera_enabled(self, event):
-        self.render(self.cameraEnabledIcon)        
-        self.__logger.info("camera enabled")
-
-    def camera_disabled(self, event):
-        self.render(self.cameraDisabledIcon)        
-        self.__logger.info("camera disabled")
 
     def settings_schema(self):
         return {
@@ -113,5 +113,17 @@ class usbCameraToggleControl(DeckControl):
             },
         }
 
-        
+class MyHandler(PatternMatchingEventHandler):
+    def __init__(self, callback: Callable, cameraUsbAddress):
+        self.callback = callback
+        self.cameraUsbAddress = cameraUsbAddress
+        super().__init__(patterns = [self.cameraUsbAddress], ignore_directories=True, case_sensitive=False)
+    
+    def on_created(event):
+        print('created')
+        self.callback(True)
 
+    def on_deleted(event):
+        print('deleted')
+        self.callback(False)
+        
