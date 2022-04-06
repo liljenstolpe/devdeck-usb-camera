@@ -1,20 +1,15 @@
 import logging
 import os
 import requests
-import watchdog.events
-
-from typing import Union, Callable
+import usb.core
+import time
+import threading
 
 from devdeck_core.controls.deck_control import DeckControl
 
-from watchdog.observers import Observer
-from watchdog.events import PatternMatchingEventHandler
 from xdg.BaseDirectory import *
 
 defaultIconPath = os.path.join(xdg_config_dirs[0], 'devdeck/assets')
-
-defaultUsbRootPath = '/sys/bus/usb'
-defaultUsbDriversFamily = 'uvcvideo'
 
 class usbCameraToggleControl(DeckControl):
 
@@ -22,35 +17,32 @@ class usbCameraToggleControl(DeckControl):
         self.__logger = logging.getLogger('devdeck')
         super().__init__(key_no, **kwargs)
 
-        self.usbRootPath = kwargs['usbRootPath'] or defaultUsbRootPath
-        self.usbDriversFamily = kwargs['usbDriversFamily'] or defaultUsbDriversFamily
-        self.cameraUsbAddress = kwargs['cameraUsbAddress']
         self.iconPath = kwargs['iconPath'] or defaultIconPath
         self.cameraEnabledIcon = kwargs['cameraEnabledIcon']
         self.cameraDisabledIcon = kwargs['cameraDisabledIcon']
-        self.observerPath = os.path.join(self.usbRootPath, 'drivers', self.usbDriversFamily)
-        self.testPath = os.path.join(self.observerPath, self.cameraUsbAddress)
+        self.cameraVdi = kwargs['cameraVdi']
+        self.cameraPdi = kwargs['cameraPdi']
+
+        self.cam = usb.core.find(idVendor=self.cameraVdi,
+         idProduct=self.cameraPdi)      
 
     def initialize(self):
-        patterns = [self.cameraUsbAddress]
-        if os.path.exists(self.testPath):
-            self.render(self.cameraEnabledIcon)
-        else:
-            self.render(self.cameraDisabledIcon)
+        
+        watcherThread = threading.Thread(target=self.watcher)
+        watcherThread.start()
 
-        event_handler = MyHandler(self.cameraEnabled, self.cameraUsbAddress)
-            
-        observer = Observer()
-        observer.schedule(event_handler, path=self.observerPath, recursive=False)
-        observer.start()
-        try:
-            while True:
-                time.sleep(1)
-        except:
-            observer.stop()
-        observer.join()                
-                
-    def cameraEnabled(self, state):
+    def watcher(self):
+        self.state = None
+
+        while True:
+            if self.state != self.cam.is_kernel_driver_active(0):
+                self.state = self.cam.is_kernel_driver_active(0)
+                self.displayChange(self.state)
+            time.sleep(0.1)
+        self.__logger.error("We should never exit the thread - oops!")
+        exit(1)
+
+    def displayChange(self, state):
         self.state = state
         
         if self.state:
@@ -59,18 +51,6 @@ class usbCameraToggleControl(DeckControl):
         else:
             self.render(self.cameraDisabledIcon)
             self.__logger.info("camera disabled")
-
-    def pressed(self):
-        observerPath = self.observerPath
-        testPath = self.testPath
-        cameraUsbAddress = self.cameraUsbAddress
-        
-        if os.path.exists(testPath):
-            with open(os.path.join(observerPath, 'unbind'), "a") as unbind:
-                unbind.write(cameraUsbAddress)
-        else:
-            with open(os.path.join(observerPath, 'bind'), "a") as bind:
-                bind.write(cameraUsbAddress)
 
     def render(self, icon):
         iconPath = self.iconPath
@@ -81,10 +61,17 @@ class usbCameraToggleControl(DeckControl):
                     .image(os.path.join(iconPath, icon)) \
                     .center_vertically() \
                     .center_horizontally() \
-                    .height(900) \
-                    .width(900) \
+                    .height(300) \
+                    .width(300) \
                     .end()
 
+    def pressed(self):
+                
+        if not self.cam.is_kernel_driver_active(0):
+            self.cam.attach_kernel_driver(0)
+        else:
+            self.cam.detach_kernel_driver(0)
+            
     def settings_schema(self):
         return {
             'usbRootPath': {
@@ -95,10 +82,14 @@ class usbCameraToggleControl(DeckControl):
                 'type': 'string',
                 'required': False
             },
-            'cameraUsbAddress': {
-                'type': 'string',
+            'cameraVdi': {
+                'type': 'integer',
                 'required': True
-           },
+            },
+            'cameraPdi': {
+                'type': 'integer',
+                'required': True
+            },
             'iconPath': {
                 'type': 'string',
                 'required': False
@@ -112,18 +103,3 @@ class usbCameraToggleControl(DeckControl):
                 'required': True
             },
         }
-
-class MyHandler(PatternMatchingEventHandler):
-    def __init__(self, callback: Callable, cameraUsbAddress):
-        self.callback = callback
-        self.cameraUsbAddress = cameraUsbAddress
-        super().__init__(patterns = [self.cameraUsbAddress], ignore_directories=True, case_sensitive=False)
-    
-    def on_created(event):
-        print('created')
-        self.callback(True)
-
-    def on_deleted(event):
-        print('deleted')
-        self.callback(False)
-        

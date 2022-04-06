@@ -15,13 +15,13 @@ with open('requirements.txt') as f:
     install_reqs = f.read().splitlines()
 
 setup(
-    name='devdeck_key_light',
+    name='devdeck_usb_camera',
     version=get_version(),
-    description="Elgato Key Light controls for DevDeck.",
+    description="USB Camera Control for DevDeck.",
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
-    author='James Ridgway',
-    url='https://github.com/jamesridgway/devdeck-key-light',
+    author='Christopher Liljenstolpe',
+    url='https://github.com/liljenstolpe/devdeck-usbCamToggle',
     license='MIT',
     packages=find_packages(),
     include_package_data=True,
